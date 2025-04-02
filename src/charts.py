@@ -3,6 +3,7 @@ import plotly.express as px
 import plotly.graph_objects as go  # Keep for Figure type hints
 from typing import Dict, List, Any, Protocol
 from dataclasses import dataclass, asdict
+from uuid import uuid4
 
 
 class Chart(Protocol):
@@ -12,33 +13,73 @@ class Chart(Protocol):
 
     def to_dict(self) -> Dict[str, Any]: ...
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], df: pd.DataFrame = None) -> "Chart":
+        """
+        Create a Chart object from a serialized dictionary.
+
+        Args:
+            data (Dict[str, Any]): The serialized chart data.
+            df (pd.DataFrame, optional): The DataFrame to use with the chart. Defaults to None.
+
+        Returns:
+            Chart: The constructed Chart object.
+        """
+        ...
+
 
 @dataclass
 class BaseChart:
-    name: str
-    id: str
-    chart_type: str
+    df: pd.DataFrame
+    id: str = uuid4().hex
+    chart_type: str = ""
+    name: str = ""
     x_column: str = ""
     y_column: str = ""
     title: str = ""
 
+    def __post_init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        # Only serialize the configuration, not the DataFrame
+        data = asdict(self)
+        data.pop("df", None)  # Remove DataFrame from serialization
+        return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "BaseChart":
+    def from_dict(cls, data: Dict[str, Any], df: pd.DataFrame = None) -> "BaseChart":
+        chart_map = {
+            "line": LineChart,
+            "bar": BarChart,
+            "scatter": ScatterChart,
+            "histogram": Histogram,
+            "box": BoxPlot,
+            "violin": ViolinPlot,
+            "heatmap": Heatmap,
+            "area": AreaChart,
+            "funnel": FunnelChart,
+        }
+        chart_type = data.pop("chart_type", "")
+        if df is not None:
+            data["df"] = df
+        if chart_type in chart_map:
+            return chart_map[chart_type](**data)
         return cls(**data)
+
+    @classmethod
+    def _get_name(cls) -> str:
+        return cls.__name__
 
 
 @dataclass
 class LineChart(BaseChart):
-    name: str
     chart_type: str = "line"
     hue_column: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.line:
+    def plot(self) -> px.line:
         fig = px.line(
-            df,
+            self.df,
             x=self.x_column,
             y=self.y_column,
             color=self.hue_column if self.hue_column else None,
@@ -53,11 +94,11 @@ class BarChart(BaseChart):
     chart_type: str = "bar"
     group_by: str = ""
 
-    def plot(self, df: pd.DataFrame, fig=None) -> px.bar:
+    def plot(self) -> px.bar:
         if self.group_by:
-            grouped = df.groupby([self.x_column, self.group_by])[self.y_column].mean().reset_index()
+            grouped = self.df.groupby([self.x_column, self.group_by])[self.y_column].mean().reset_index()
         else:
-            grouped = df.groupby([self.x_column])[self.y_column].mean().reset_index()
+            grouped = self.df.groupby([self.x_column])[self.y_column].mean().reset_index()
 
         fig = px.bar(
             grouped,
@@ -73,16 +114,19 @@ class BarChart(BaseChart):
 @dataclass
 class Histogram(BaseChart):
     chart_type: str = "histogram"
+    color: str = ""
     bins: int = 10
 
-    def plot(self, df: pd.DataFrame, fig=None) -> px.histogram:
-        if fig is None:
-            fig = px.histogram(
-                df,
-                x=self.x_column,
-                nbins=self.bins,
-                title=self.title,
-            )
+    def plot(self) -> px.histogram:
+        fig = px.histogram(
+            self.df,
+            x=self.x_column,
+            nbins=self.bins,
+            title=self.title,
+            color=self.color if self.color else None,
+            barmode="group",
+        )
+        print(self.__dict__)
         return fig
 
 
@@ -92,9 +136,9 @@ class ScatterChart(BaseChart):
     hue_column: str = ""
     size_column: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.scatter:
+    def plot(self) -> px.scatter:
         fig = px.scatter(
-            df,
+            self.df,
             x=self.x_column,
             y=self.y_column,
             color=self.hue_column if self.hue_column else None,
@@ -109,12 +153,8 @@ class PieChart(BaseChart):
     chart_type: str = "pie"
     group_by: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.pie:
-        fig = px.pie(
-            df,
-            names=self.group_by,
-            title=self.title,
-        )
+    def plot(self) -> px.pie:
+        fig = px.pie(self.df, names=self.group_by, title=self.title, **self.kwargs)
         return fig
 
 
@@ -123,9 +163,9 @@ class BoxPlot(BaseChart):
     chart_type: str = "boxplot"
     color: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.box:
+    def plot(self) -> px.box:
         fig = px.box(
-            df,
+            self.df,
             x=self.x_column,
             y=self.y_column,
             color=self.color if self.color else None,
@@ -139,9 +179,9 @@ class ViolinPlot(BaseChart):
     chart_type: str = "violin"
     color: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.violin:
+    def plot(self) -> px.violin:
         fig = px.violin(
-            df,
+            self.df,
             x=self.x_column,
             y=self.y_column,
             color=self.color if self.color else None,
@@ -155,9 +195,9 @@ class Heatmap(BaseChart):
     chart_type: str = "heatmap"
     z_column: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.density_heatmap:
+    def plot(self) -> px.density_heatmap:
         fig = px.density_heatmap(
-            df,
+            self.df,
             x=self.x_column,
             y=self.y_column,
             z=self.z_column if self.z_column else None,
@@ -171,9 +211,9 @@ class AreaChart(BaseChart):
     chart_type: str = "area"
     color: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.area:
+    def plot(self) -> px.area:
         fig = px.area(
-            df,
+            self.df,
             x=self.x_column,
             y=self.y_column,
             color=self.color if self.color else None,
@@ -187,9 +227,9 @@ class SunburstChart(BaseChart):
     chart_type: str = "sunburst"
     color: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.sunburst:
+    def plot(self) -> px.sunburst:
         fig = px.sunburst(
-            df,
+            self.df,
             path=[self.x_column, self.y_column],
             color=self.color if self.color else None,
             title=self.title,
@@ -202,9 +242,9 @@ class FunnelChart(BaseChart):
     chart_type: str = "funnel"
     color: str = ""
 
-    def plot(self, df: pd.DataFrame) -> px.funnel:
+    def plot(self) -> px.funnel:
         fig = px.funnel(
-            df,
+            self.df,
             x=self.x_column,
             y=self.y_column,
             color=self.color if self.color else None,

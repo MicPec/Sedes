@@ -9,3 +9,8 @@ dependencies = [
     "plotly>=6.0.1",
     "streamlit>=1.44.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
+]
