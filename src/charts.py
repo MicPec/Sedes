@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go  # Keep for Figure type hints
 from typing import Dict, List, Any, Protocol
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from uuid import uuid4
 
 
@@ -37,6 +37,7 @@ class BaseChart:
     x_column: str = ""
     y_column: str = ""
     title: str = ""
+    params: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -84,7 +85,7 @@ class LineChart(BaseChart):
             y=self.y_column,
             color=self.hue_column if self.hue_column else None,
             title=self.title,
-            markers=True,
+            **self.params,
         )
         return fig
 
@@ -105,8 +106,9 @@ class BarChart(BaseChart):
             x=self.x_column,
             y=self.y_column,
             color=self.group_by if self.group_by else None,
-            barmode="group",
+            # barmode="group",
             title=self.title,
+            **self.params,
         )
         return fig
 
@@ -124,9 +126,9 @@ class Histogram(BaseChart):
             nbins=self.bins,
             title=self.title,
             color=self.color if self.color else None,
-            barmode="group",
+            # barmode="group",
+            **self.params,
         )
-        print(self.__dict__)
         return fig
 
 
@@ -144,6 +146,7 @@ class ScatterChart(BaseChart):
             color=self.hue_column if self.hue_column else None,
             size=self.size_column if self.size_column else None,
             title=self.title,
+            **self.params,
         )
         return fig
 
@@ -154,7 +157,7 @@ class PieChart(BaseChart):
     group_by: str = ""
 
     def plot(self) -> px.pie:
-        fig = px.pie(self.df, names=self.group_by, title=self.title, **self.kwargs)
+        fig = px.pie(self.df, names=self.group_by, title=self.title, **self.params)
         return fig
 
 
@@ -170,6 +173,7 @@ class BoxPlot(BaseChart):
             y=self.y_column,
             color=self.color if self.color else None,
             title=self.title,
+            **self.params,
         )
         return fig
 
@@ -186,6 +190,7 @@ class ViolinPlot(BaseChart):
             y=self.y_column,
             color=self.color if self.color else None,
             title=self.title,
+            **self.params,
         )
         return fig
 
@@ -202,6 +207,7 @@ class Heatmap(BaseChart):
             y=self.y_column,
             z=self.z_column if self.z_column else None,
             title=self.title,
+            **self.params,
         )
         return fig
 
@@ -218,6 +224,7 @@ class AreaChart(BaseChart):
             y=self.y_column,
             color=self.color if self.color else None,
             title=self.title,
+            **self.params,
         )
         return fig
 
@@ -233,6 +240,7 @@ class SunburstChart(BaseChart):
             path=[self.x_column, self.y_column],
             color=self.color if self.color else None,
             title=self.title,
+            **self.params,
         )
         return fig
 
@@ -249,5 +257,6 @@ class FunnelChart(BaseChart):
             y=self.y_column,
             color=self.color if self.color else None,
             title=self.title,
+            **self.params,
         )
         return fig

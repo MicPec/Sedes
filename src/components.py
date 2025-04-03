@@ -5,6 +5,7 @@ import streamlit as st
 from charts import Chart
 from dataclasses import asdict
 from uuid import uuid4
+from string import Template
 
 ComponentType = Enum("ComponentType", ["CHART", "OPERATION", "DATA", "TEXT"])
 
@@ -34,7 +35,7 @@ class BaseComponent:
 @dataclass
 class TextComponent(BaseComponent):
     component_type: ComponentType = ComponentType.TEXT
-    text: str = ""
+    text: Template = ""
 
     def draw(self) -> Any:
         return st.write(self.text, key=uuid4().hex)

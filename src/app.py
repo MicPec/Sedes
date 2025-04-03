@@ -36,7 +36,7 @@ hist = Histogram(
     color="class",
     bins=10,
     title="test",
-    # barmode="group",
+    params={"barmode": "group"},
 )
 hist_fig = hist.plot()
 
