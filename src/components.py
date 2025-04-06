@@ -7,12 +7,14 @@ from dataclasses import asdict
 from uuid import uuid4
 from string import Template
 
+
 ComponentType = Enum("ComponentType", ["CHART", "OPERATION", "DATA", "TEXT"])
 
 
 class Component(Protocol):
     component_type: ComponentType
-    # id: str
+    id: str
+    name: str
 
     def draw(self) -> Any: ...
 
@@ -20,6 +22,14 @@ class Component(Protocol):
 @dataclass
 class BaseComponent:
     component_type: ComponentType
+    id: str = None
+    name: str = None
+
+    def __post_init__(self):
+        if self.id is None:
+            self.id = uuid4().hex
+        if self.name is None:
+            self.name = f"Component {self.id[:4]}"
 
     def draw(self) -> Any:
         raise NotImplementedError
@@ -36,6 +46,13 @@ class BaseComponent:
 class TextComponent(BaseComponent):
     component_type: ComponentType = ComponentType.TEXT
     text: Template = ""
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Use the first few characters of the text as the name
+        if self.text:
+            text_str = str(self.text)
+            self.name = text_str[:20] + "..." if len(text_str) > 20 else text_str
 
     def draw(self) -> Any:
         return st.write(self.text, key=uuid4().hex)

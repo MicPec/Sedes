@@ -53,3 +53,20 @@ class DataFrameInfo:
             null_count = self.df[col].isna().sum()
             missing[col] = {"count": int(null_count), "percentage": float(null_count / len(self.df) * 100)}
         return missing
+        
+    def get_sample(self, n: int = 5) -> Dict[str, List[Any]]:
+        """Get a sample of the dataframe data"""
+        if len(self.df) <= n:
+            sample_df = self.df
+        else:
+            sample_df = self.df.head(n)
+        
+        # Convert to serializable format
+        sample_dict = {}
+        for col in sample_df.columns:
+            # Handle different data types appropriately
+            values = sample_df[col].tolist()
+            # Convert any non-serializable objects to strings
+            sample_dict[col] = [str(v) if not isinstance(v, (int, float, str, bool, type(None))) else v for v in values]
+        
+        return sample_dict

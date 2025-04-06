@@ -33,7 +33,7 @@ class BaseChart:
     df: pd.DataFrame
     id: str = uuid4().hex
     chart_type: str = ""
-    name: str = ""
+    # name: str = ""
     x_column: str = ""
     y_column: str = ""
     title: str = ""
@@ -79,14 +79,21 @@ class LineChart(BaseChart):
     hue_column: str = ""
 
     def plot(self) -> px.line:
-        fig = px.line(
-            self.df,
-            x=self.x_column,
-            y=self.y_column,
-            color=self.hue_column if self.hue_column else None,
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "y": self.y_column,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color if it's set
+        if self.hue_column:
+            params["color"] = self.hue_column
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.line(self.df, **params)
         return fig
 
 
@@ -96,20 +103,27 @@ class BarChart(BaseChart):
     group_by: str = ""
 
     def plot(self) -> px.bar:
+        # Group the data appropriately
         if self.group_by:
             grouped = self.df.groupby([self.x_column, self.group_by])[self.y_column].mean().reset_index()
         else:
             grouped = self.df.groupby([self.x_column])[self.y_column].mean().reset_index()
 
-        fig = px.bar(
-            grouped,
-            x=self.x_column,
-            y=self.y_column,
-            color=self.group_by if self.group_by else None,
-            # barmode="group",
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "y": self.y_column,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color if group_by is set
+        if self.group_by:
+            params["color"] = self.group_by
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.bar(grouped, **params)
         return fig
 
 
@@ -120,15 +134,21 @@ class Histogram(BaseChart):
     bins: int = 10
 
     def plot(self) -> px.histogram:
-        fig = px.histogram(
-            self.df,
-            x=self.x_column,
-            nbins=self.bins,
-            title=self.title,
-            color=self.color if self.color else None,
-            # barmode="group",
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "nbins": self.bins,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color if it's set
+        if self.color:
+            params["color"] = self.color
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.histogram(self.df, **params)
         return fig
 
 
@@ -139,15 +159,23 @@ class ScatterChart(BaseChart):
     size_column: str = ""
 
     def plot(self) -> px.scatter:
-        fig = px.scatter(
-            self.df,
-            x=self.x_column,
-            y=self.y_column,
-            color=self.hue_column if self.hue_column else None,
-            size=self.size_column if self.size_column else None,
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "y": self.y_column,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color and size if they're set
+        if self.hue_column:
+            params["color"] = self.hue_column
+        if self.size_column:
+            params["size"] = self.size_column
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.scatter(self.df, **params)
         return fig
 
 
@@ -157,7 +185,16 @@ class PieChart(BaseChart):
     group_by: str = ""
 
     def plot(self) -> px.pie:
-        fig = px.pie(self.df, names=self.group_by, title=self.title, **self.params)
+        # Build parameters dict with only non-empty values
+        params = {
+            "names": self.group_by,
+            "title": self.title if self.title else None,
+        }
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.pie(self.df, **params)
         return fig
 
 
@@ -167,14 +204,21 @@ class BoxPlot(BaseChart):
     color: str = ""
 
     def plot(self) -> px.box:
-        fig = px.box(
-            self.df,
-            x=self.x_column,
-            y=self.y_column,
-            color=self.color if self.color else None,
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "y": self.y_column,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color if it's set
+        if self.color:
+            params["color"] = self.color
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.box(self.df, **params)
         return fig
 
 
@@ -184,14 +228,21 @@ class ViolinPlot(BaseChart):
     color: str = ""
 
     def plot(self) -> px.violin:
-        fig = px.violin(
-            self.df,
-            x=self.x_column,
-            y=self.y_column,
-            color=self.color if self.color else None,
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "y": self.y_column,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color if it's set
+        if self.color:
+            params["color"] = self.color
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.violin(self.df, **params)
         return fig
 
 
@@ -201,14 +252,21 @@ class Heatmap(BaseChart):
     z_column: str = ""
 
     def plot(self) -> px.density_heatmap:
-        fig = px.density_heatmap(
-            self.df,
-            x=self.x_column,
-            y=self.y_column,
-            z=self.z_column if self.z_column else None,
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "y": self.y_column,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add z if it's set
+        if self.z_column:
+            params["z"] = self.z_column
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.density_heatmap(self.df, **params)
         return fig
 
 
@@ -218,14 +276,21 @@ class AreaChart(BaseChart):
     color: str = ""
 
     def plot(self) -> px.area:
-        fig = px.area(
-            self.df,
-            x=self.x_column,
-            y=self.y_column,
-            color=self.color if self.color else None,
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "y": self.y_column,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color if it's set
+        if self.color:
+            params["color"] = self.color
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.area(self.df, **params)
         return fig
 
 
@@ -235,13 +300,20 @@ class SunburstChart(BaseChart):
     color: str = ""
 
     def plot(self) -> px.sunburst:
-        fig = px.sunburst(
-            self.df,
-            path=[self.x_column, self.y_column],
-            color=self.color if self.color else None,
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "path": [self.x_column, self.y_column],
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color if it's set
+        if self.color:
+            params["color"] = self.color
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.sunburst(self.df, **params)
         return fig
 
 
@@ -251,12 +323,33 @@ class FunnelChart(BaseChart):
     color: str = ""
 
     def plot(self) -> px.funnel:
-        fig = px.funnel(
-            self.df,
-            x=self.x_column,
-            y=self.y_column,
-            color=self.color if self.color else None,
-            title=self.title,
-            **self.params,
-        )
+        # Build parameters dict with only non-empty values
+        params = {
+            "x": self.x_column,
+            "y": self.y_column,
+            "title": self.title if self.title else None,
+        }
+
+        # Only add color if it's set
+        if self.color:
+            params["color"] = self.color
+
+        # Add any extra parameters
+        params.update(self.params)
+
+        fig = px.funnel(self.df, **params)
         return fig
+
+
+chart_types = {
+    "Line Chart": LineChart,
+    "Bar Chart": BarChart,
+    "Histogram": Histogram,
+    "Scatter Chart": ScatterChart,
+    "Pie Chart": PieChart,
+    "Box Plot": BoxPlot,
+    "Violin Plot": ViolinPlot,
+    "Heatmap": Heatmap,
+    "Area Chart": AreaChart,
+    "Funnel Chart": FunnelChart,
+}
