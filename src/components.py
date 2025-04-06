@@ -35,10 +35,23 @@ class BaseComponent:
         raise NotImplementedError
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        """Convert component to a dictionary for serialization."""
+        data = asdict(self)
+        # Convert enum to string for JSON serialization
+        if "component_type" in data and isinstance(data["component_type"], Enum):
+            data["component_type"] = data["component_type"].name
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BaseComponent":
+        """Create a component from a dictionary."""
+        # Convert component_type from string back to enum if needed
+        if "component_type" in data and isinstance(data["component_type"], str):
+            try:
+                data["component_type"] = ComponentType[data["component_type"]]
+            except KeyError:
+                # Handle case where enum value doesn't exist
+                data["component_type"] = ComponentType.CHART  # Default fallback
         return cls(**data)
 
 

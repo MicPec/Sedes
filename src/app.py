@@ -1,3 +1,4 @@
+from re import T
 import streamlit as st
 import pandas as pd
 import os
@@ -20,7 +21,7 @@ from dfinfo import DataFrameInfo
 from df_operations import FilterOperation, AggregateOperation, LoadCsvOperation, SaveCsvOperation, DataCleanOperation
 
 # Set page config
-st.set_page_config(layout="wide", page_title="Simple & Elegant Data Explorer System")
+st.set_page_config(layout="wide", page_title="Simple & Elegant Data Explorer System (🚽 SEDES)", page_icon="🚽")
 
 # Initialize session state
 if "app_state" not in st.session_state:
@@ -105,6 +106,11 @@ def edit_text(component_id):
 # Dialog for adding chart component
 @st.dialog("Add Chart", width="large")
 def add_chart():
+    """
+    Dialog for adding a chart component to the application.
+
+    Creates a new chart based on user-selected parameters and adds it to the app state.
+    """
     st.write("Add Chart Component")
 
     # Get source dataframe
@@ -112,8 +118,7 @@ def add_chart():
     if df is None:
         return
 
-    # Component form
-    # name = st.text_input("Component Name", value=f"Chart {uuid4().hex[:4]}")
+    # Select chart type
     chart_type = st.selectbox("Chart Type", list(chart_types.keys()))
 
     # Get chart parameters based on type
@@ -125,13 +130,13 @@ def add_chart():
 
         # Create component
         component = ChartComponent(chart=chart_fig)
-        # component.name = name
-        setattr(component, "source_df_id", selected_df_id)
 
-        # Store chart parameters and type with the component for later editing
+        # Store source dataframe ID and chart metadata for later editing
+        setattr(component, "source_df_id", selected_df_id)
         setattr(component, "chart_type", chart_type)
         setattr(component, "chart_params", chart_params)
 
+        # Add component to app state
         st.session_state.app_state.add_component(component)
         st.rerun()
 
@@ -177,34 +182,44 @@ def draw_sample_data(df):
 
 
 def get_chart_params(chart_type, df, existing_params=None):
-    """Helper function to get chart parameters based on chart type"""
+    """
+    Get chart parameters based on chart type.
+
+    Args:
+        chart_type (str): Type of chart to create
+        df (pd.DataFrame): DataFrame to use for the chart
+        existing_params (dict, optional): Existing parameters for editing. Defaults to None.
+
+    Returns:
+        dict: Parameters for the chart
+    """
     columns = df.columns.tolist()
     existing_params = existing_params or {}
 
     # Common parameters for all charts
     chart_params = {
-        # "name": st.text_input("Chart Name", value=existing_params.get("name", f"Chart {uuid4().hex[:4]}")),
         "title": st.text_input("Chart Title", value=existing_params.get("title", "")),
-        "x_column": st.selectbox(
-            "X Column",
-            options=columns,
-            index=columns.index(existing_params.get("x_column", ""))
-            if existing_params.get("x_column", "") in columns
-            else 0,
-        ),
     }
 
-    # Parameters specific to chart types
+    # Add x_column for all chart types
+    default_x = existing_params.get("x_column", "")
+    chart_params["x_column"] = st.selectbox(
+        "X Column",
+        options=columns,
+        index=columns.index(default_x) if default_x in columns else 0,
+    )
+
+    # Add y_column for charts that need it
     if chart_type not in ["Histogram", "Pie Chart"]:
         default_y = existing_params.get("y_column", "")
         chart_params["y_column"] = st.selectbox(
-            "Y Column", 
-            options=[""] + columns, 
-            index=([""] + columns).index(default_y) if default_y in [""] + columns else 0
+            "Y Column",
+            options=columns,
+            index=columns.index(default_y) if default_y in columns else 0,
         )
 
-    # Additional parameters based on chart type
-    if chart_type in ["Line Chart", "Scatter Chart", "Area Chart"]:
+    # Add chart-specific parameters
+    if chart_type in ["Line Chart", "Scatter Chart"]:
         default_hue = existing_params.get("hue_column", "")
         chart_params["hue_column"] = st.selectbox(
             "Color By",
@@ -223,15 +238,19 @@ def get_chart_params(chart_type, df, existing_params=None):
     if chart_type in ["Bar Chart", "Pie Chart"]:
         default_group = existing_params.get("group_by", "")
         chart_params["group_by"] = st.selectbox(
-            "Group By", 
+            "Group By",
             options=[""] + columns,
-            index=([""] + columns).index(default_group) if default_group in [""] + columns else 0
+            index=([""] + columns).index(default_group) if default_group in [""] + columns else 0,
         )
 
     if chart_type == "Histogram":
-        default_bins = existing_params.get("bins", 10)
-        chart_params["bins"] = st.slider("Number of Bins", min_value=5, max_value=50, value=default_bins)
-
+        chart_params["bins"] = st.slider(
+            "Number of Bins",
+            min_value=5,
+            max_value=100,
+            value=existing_params.get("bins", 10),
+            step=5,
+        )
         default_color = existing_params.get("color", "")
         chart_params["color"] = st.selectbox(
             "Color By",
@@ -254,7 +273,15 @@ def get_chart_params(chart_type, df, existing_params=None):
 
 
 def extra_params(existing_params=None):
-    """Helper function to add extra parameters to charts"""
+    """
+    Add extra parameters to charts.
+
+    Args:
+        existing_params (dict, optional): Existing parameters for editing. Defaults to None.
+
+    Returns:
+        dict: Extra parameters for the chart
+    """
     # Initialize session state for extra params if not exists
     if "extra_params_state" not in st.session_state:
         st.session_state.extra_params_state = existing_params.get("extra_params", {}) if existing_params else {}
@@ -267,17 +294,17 @@ def extra_params(existing_params=None):
         params_to_delete = []
         params_to_update = {}
 
-        for i, (key, value) in enumerate(list(params.items())):
-            cols = st.columns([3, 3, 1])
-            with cols[0]:
-                new_key = st.text_input(f"Key {i}", value=key, key=f"param_key_{i}")
-            with cols[1]:
-                new_value = st.text_input(f"Value {i}", value=value, key=f"param_val_{i}")
-            with cols[2]:
-                if st.button("🗑️", key=f"del_param_{i}"):
+        for key, value in params.items():
+            col1, col2, col3 = st.columns([2, 4, 1])
+            with col1:
+                new_key = st.text_input("Parameter", value=key, key=f"param_key_{key}")
+            with col2:
+                new_value = st.text_input("Value", value=value, key=f"param_value_{key}")
+            with col3:
+                if st.button("🗑️", key=f"delete_param_{key}"):
                     params_to_delete.append(key)
 
-            # Track key/value changes for update after the loop
+            # Check if key or value changed
             if new_key != key or new_value != value:
                 params_to_update[key] = (new_key, new_value)
 
@@ -302,22 +329,32 @@ def extra_params(existing_params=None):
 
 
 def create_chart(chart_type, df, params):
-    """Helper function to create a chart based on type and parameters"""
+    """
+    Create a chart based on chart type and parameters.
+
+    Args:
+        chart_type (str): Type of chart to create
+        df (pd.DataFrame): DataFrame to use for the chart
+        params (dict): Parameters for the chart
+
+    Returns:
+        plotly.graph_objects.Figure: The created chart
+    """
     chart_class = chart_types[chart_type]
 
     # Create base chart parameters
     chart_params = {
         "df": df,
     }
-    
+
     # Only add parameters that have values
     if params.get("title"):
         chart_params["title"] = params["title"]
-    
+
     if params.get("x_column"):
         chart_params["x_column"] = params["x_column"]
-    
-    # Add chart-specific parameters only if they have values
+
+    # Add y_column for charts that need it
     if chart_type not in ["Histogram", "Pie Chart"] and params.get("y_column"):
         chart_params["y_column"] = params["y_column"]
 
@@ -325,12 +362,15 @@ def create_chart(chart_type, df, params):
     if chart_type in ["Line Chart", "Scatter Chart"] and params.get("hue_column"):
         chart_params["hue_column"] = params["hue_column"]
 
+    # Add size_column for scatter charts
     if chart_type == "Scatter Chart" and params.get("size_column"):
         chart_params["size_column"] = params["size_column"]
 
+    # Add group_by for charts that need it
     if chart_type in ["Bar Chart", "Pie Chart"] and params.get("group_by"):
         chart_params["group_by"] = params["group_by"]
 
+    # Add histogram-specific parameters
     if chart_type == "Histogram":
         if "bins" in params:
             chart_params["bins"] = params["bins"]
@@ -351,8 +391,14 @@ def create_chart(chart_type, df, params):
 
 
 # Dialog for editing chart component
-@st.dialog("Edit Chart")
+@st.dialog("Edit Chart", width="large")
 def edit_chart(component_id):
+    """
+    Dialog for editing an existing chart component.
+
+    Args:
+        component_id (str): ID of the component to edit
+    """
     # Get the component to edit
     component = get_component_by_id(component_id)
     if not component or not hasattr(component, "chart"):
@@ -361,26 +407,26 @@ def edit_chart(component_id):
 
     st.write("Edit Chart Component")
 
-    # Get component properties
-    component_name = getattr(component, "name", f"Chart {uuid4().hex[:4]}")
+    # Get source dataframe
     source_df_id = getattr(component, "source_df_id", st.session_state.app_state.current_df_id)
-
-    # Get the source dataframe
     selected_df_id, df = select_df(source_df_id)
     if df is None:
         return
 
-    # Get stored chart type or determine from component
-    chart_type = getattr(component, "chart_type", get_chart_type_from_component(component))
+    # Get chart type
+    chart_type = getattr(component, "chart_type", "Line Chart")
+    if not chart_type:
+        chart_type = get_chart_type_from_component(component)
 
-    # Component form
-    name = st.text_input("Component Name", value=component_name)
+    # Allow user to change chart type
     chart_type = st.selectbox("Chart Type", list(chart_types.keys()), index=list(chart_types.keys()).index(chart_type))
 
-    # Get stored chart parameters or extract from chart
-    existing_params = getattr(component, "chart_params", {})
+    # Get existing parameters or extract from chart
+    existing_params = getattr(component, "chart_params", None)
+    if not existing_params:
+        existing_params = extract_chart_parameters(component.chart)
 
-    # Get chart parameters with existing values
+    # Get chart parameters
     chart_params = get_chart_params(chart_type, df, existing_params)
 
     if st.button("Submit"):
@@ -388,7 +434,6 @@ def edit_chart(component_id):
         chart_fig = create_chart(chart_type, df, chart_params)
 
         # Update component
-        component.name = name
         component.chart = chart_fig
         setattr(component, "source_df_id", selected_df_id)
 
@@ -396,6 +441,7 @@ def edit_chart(component_id):
         setattr(component, "chart_type", chart_type)
         setattr(component, "chart_params", chart_params)
 
+        # Update component in app state
         st.session_state.app_state.update_component(component_id, component)
         st.rerun()
 
@@ -643,7 +689,15 @@ def add_aggregation():
 
 
 def get_aggregation_parameters(df):
-    """Helper function to get aggregation parameters"""
+    """
+    Get aggregation parameters for dataframe operations.
+
+    Args:
+        df (pd.DataFrame): DataFrame to aggregate
+
+    Returns:
+        dict: Aggregation parameters including group_by columns and aggregation functions
+    """
     columns = df.columns.tolist()
     group_by = st.multiselect("Group By Columns", options=columns)
 
@@ -657,17 +711,13 @@ def get_aggregation_parameters(df):
     else:
         for col in numeric_columns:
             agg_options = ["none", "mean", "sum", "min", "max", "count", "median"]
-            selected_agg = st.selectbox(
-                f"Aggregation for {col}", 
-                options=agg_options,
-                index=0,
-                key=f"agg_{col}"
-            )
+            selected_agg = st.selectbox(f"Aggregation for {col}", options=agg_options, index=0, key=f"agg_{col}")
 
             # Only add non-'none' aggregation functions to the dictionary
             if selected_agg != "none":
                 agg_func[col] = selected_agg
 
+    # Filter out any 'none' values that might have slipped through
     return {"group_by": group_by, "agg_func": {k: v for k, v in agg_func.items() if v != "none"}}
 
 
@@ -1160,7 +1210,12 @@ def edit_filter_operation(operation_id):
 
 @st.dialog("Edit Aggregation")
 def edit_aggregation_operation(operation_id):
-    """Dialog for editing an aggregation operation"""
+    """
+    Dialog for editing an aggregation operation.
+
+    Args:
+        operation_id (str): ID of the operation to edit
+    """
     # Get the operation to edit
     operation = next((op for op in st.session_state.app_state.operations if op.id == operation_id), None)
     if not operation or not hasattr(operation, "group_by"):
@@ -1177,15 +1232,13 @@ def edit_aggregation_operation(operation_id):
     # Set operation name
     name = st.text_input("Operation Name", value=operation.name)
 
-    # Set group by columns
+    # Get aggregation parameters
     columns = df.columns.tolist()
-    group_by = st.multiselect(
-        "Group By Columns", 
-        options=columns, 
-        default=operation.group_by
-    )
 
-    # Set aggregation functions for each numeric column
+    # Group by columns
+    group_by = st.multiselect("Group By Columns", options=columns, default=operation.group_by)
+
+    # Aggregation functions for each numeric column
     st.subheader("Aggregation Functions")
     agg_func = {}
 
@@ -1195,19 +1248,18 @@ def edit_aggregation_operation(operation_id):
     else:
         for col in numeric_columns:
             agg_options = ["none", "mean", "sum", "min", "max", "count", "median"]
-            
-            # Determine the current aggregation function for this column
-            current_agg = operation.agg_func.get(col, "none")
-            agg_index = agg_options.index(current_agg) if current_agg in agg_options else 0
-            
-            # Create a selectbox for each numeric column
+            # Set default index based on existing operation
+            default_index = 0
+            if col in operation.agg_func:
+                try:
+                    default_index = agg_options.index(operation.agg_func[col])
+                except ValueError:
+                    default_index = 0
+
             selected_agg = st.selectbox(
-                f"Aggregation for {col}", 
-                options=agg_options,
-                index=agg_index,
-                key=f"agg_{col}"
+                f"Aggregation for {col}", options=agg_options, index=default_index, key=f"edit_agg_{col}"
             )
-            
+
             # Only add non-'none' aggregation functions to the dictionary
             if selected_agg != "none":
                 agg_func[col] = selected_agg
@@ -1418,7 +1470,7 @@ def display_data_tab():
 
 
 # Main app layout
-st.title("Simple & Elegant Data Explorer System")
+st.title("Simple & Elegant Data Explorer System (🚽 SEDES)")
 
 # Load sample data if no operations exist
 if not st.session_state.app_state.operations:
@@ -1491,13 +1543,13 @@ with st.sidebar:
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        if st.button("💾", help="Save State", key="save_state_btn"):
+        if st.button("💾", help="Save State", key="save_state_btn", disabled=True):
             save_state()
     with c2:
-        if st.button("📂", help="Load State", key="load_state_btn"):
+        if st.button("📂", help="Load State", key="load_state_btn", disabled=True):
             load_state()
     with c3:
-        if st.button("📓", help="Generate Notebook", key="gen_notebook_btn"):
+        if st.button("📓", help="Generate Notebook", key="gen_notebook_btn", disabled=True):
             generate_notebook()
 
 # Main content
