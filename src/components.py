@@ -6,6 +6,7 @@ from charts import Chart
 from dataclasses import asdict
 from uuid import uuid4
 from string import Template
+import pandas as pd
 
 
 ComponentType = Enum("ComponentType", ["CHART", "OPERATION", "DATA", "TEXT"])
@@ -78,3 +79,47 @@ class ChartComponent(BaseComponent):
 
     def draw(self) -> Any:
         return st.plotly_chart(self.chart, use_container_width=True, key=uuid4().hex)
+
+
+@dataclass
+class DataInfoComponent(BaseComponent):
+    component_type: ComponentType = ComponentType.DATA
+    source_df_id: str = ""
+    info_type: str = "preview"  # Options: preview, shape, statistics, column_types, missing_values, all
+
+    def draw(self) -> Any:
+        # Get the dataframe
+        if not hasattr(st.session_state, "app_state"):
+            return st.error("App state not initialized")
+
+        df = st.session_state.app_state.get_dataframe_by_id(self.source_df_id)
+        if df is None:
+            return st.error(f"DataFrame not found: {self.source_df_id}")
+
+        # Display the selected information
+        if self.info_type == "preview":
+            return st.dataframe(df, key=uuid4().hex)
+
+        elif self.info_type == "shape":
+            st.write(f"**Shape**: {df.shape[0]} rows × {df.shape[1]} columns")
+
+        elif self.info_type == "statistics":
+            st.write("### Numeric Columns Statistics")
+            return st.dataframe(df.describe(), key=uuid4().hex)
+
+        elif self.info_type == "column_types":
+            st.write("### Column Types")
+            dtypes_df = pd.DataFrame({"Data Type": [str(dtype) for dtype in df.dtypes]}, index=df.columns)
+            dtypes_df.index.name = "Column"
+            return st.dataframe(dtypes_df.reset_index(), key=uuid4().hex)
+
+        elif self.info_type == "missing_values":
+            st.write("### Missing Values")
+            missing_df = pd.DataFrame(
+                {"Missing Values": df.isna().sum(), "Percentage": (df.isna().sum() / len(df) * 100).round(2)}
+            )
+            missing_df.index.name = "Column"
+            return st.dataframe(missing_df.reset_index(), key=uuid4().hex)
+
+        else:
+            return st.error(f"Invalid info type: {self.info_type}")

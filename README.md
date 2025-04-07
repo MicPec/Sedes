@@ -1,4 +1,4 @@
-# 🚽 SEDES - Simple & Elegant Data Explorer System
+# 🚽 SEDES - Simple & Elegant Data Exploration System
 
 SEDES is a powerful, interactive Exploratory Data Analysis (EDA) tool built with Streamlit that allows users to easily upload, transform, visualize, and analyze data without writing code.
 
@@ -7,6 +7,8 @@ SEDES is a powerful, interactive Exploratory Data Analysis (EDA) tool built with
 - **Data Upload**: Import CSV files with customizable separators
 - **Data Transformation**: Apply filters, aggregations, and cleaning operations
 - **Dynamic Visualization**: Create and customize various chart types using Plotly Express
+- **Data Info Components**: Display various types of information about your dataframes
+- **State Management**: Save and load application state, generate Jupyter notebooks
 - **Operation History**: Track all data operations with the ability to edit or delete them
 - **Interactive UI**: User-friendly interface with modal dialogs for all operations
 - **Sample Data**: Includes sample dataset to get started quickly
@@ -25,10 +27,26 @@ SEDES supports a variety of chart types:
 - Area Charts
 - Funnel Charts
 
+## Data Info Components
+
+The Data Info feature allows you to display various types of information about your dataframes:
+- DataFrame Preview
+- Shape (rows & columns)
+- Statistics (using `describe()`)
+- Column Types
+- Missing Values
+- All Information (combining all aspects)
+
 ## Screenshots
 
 ### EDA Tab
 ![EDA Tab](img/eda.png)
+
+### Data Cleaning Operation
+![Data Cleaning Operation](img/data_clean.png)
+
+### Edit Filter Operation
+![Edit Filter Operation](img/filter_edit.png)
 
 ### Data Preview Tab
 ![Data Preview Tab](img/data_prev.png)
@@ -60,8 +78,9 @@ The application will open in your default web browser.
 
 1. **Load Data**: Click the "📂" button in the sidebar to load a CSV file
 2. **Add Operations**: Use the sidebar buttons to add filters, aggregations, or data cleaning operations
-3. **Add Visualizations**: Create charts and text components in the EDA tab
+3. **Add Components**: Create charts, text components, and data info displays in the EDA tab
 4. **View Data**: Explore your data in the Data Preview tab
+5. **Manage State**: Save your work, load previous sessions, or generate Jupyter notebooks
 
 ## Project Structure
 
@@ -71,6 +90,7 @@ The application will open in your default web browser.
 - `src/charts.py`: Chart creation and customization
 - `src/df_operations.py`: Data operations (filter, aggregate, clean)
 - `src/dfinfo.py`: DataFrame information utilities
+- `src/codegen.py`: Code generation for Jupyter notebooks
 
 ## License
 

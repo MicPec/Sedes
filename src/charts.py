@@ -183,6 +183,7 @@ class ScatterChart(BaseChart):
 class PieChart(BaseChart):
     chart_type: str = "pie"
     group_by: str = ""
+    values_column: str = ""
 
     def plot(self) -> px.pie:
         # Build parameters dict with only non-empty values
@@ -190,6 +191,10 @@ class PieChart(BaseChart):
             "names": self.group_by,
             "title": self.title if self.title else None,
         }
+        
+        # Add values column if specified
+        if self.values_column:
+            params["values"] = self.values_column
 
         # Add any extra parameters
         params.update(self.params)

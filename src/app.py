@@ -2,9 +2,11 @@ from re import T
 import streamlit as st
 import pandas as pd
 import os
+import json
+import nbformat
 from uuid import uuid4
 from state import AppState
-from components import TextComponent, ChartComponent
+from components import TextComponent, ChartComponent, DataInfoComponent
 from charts import (
     LineChart,
     BarChart,
@@ -19,9 +21,10 @@ from charts import (
 )
 from dfinfo import DataFrameInfo
 from df_operations import FilterOperation, AggregateOperation, LoadCsvOperation, SaveCsvOperation, DataCleanOperation
+from codegen import generate_notebook_cells
 
 # Set page config
-st.set_page_config(layout="wide", page_title="Simple & Elegant Data Explorer System (🚽 SEDES)", page_icon="🚽")
+st.set_page_config(layout="wide", page_title="Simple & Elegant Data Exploration System (🚽 SEDES)", page_icon="🚽")
 
 # Initialize session state
 if "app_state" not in st.session_state:
@@ -59,86 +62,167 @@ def load_state():
 
 
 def generate_notebook():
-    os.makedirs("notebooks", exist_ok=True)
-    notebook_path = f"notebooks/sedes_notebook_{uuid4().hex[:8]}.ipynb"
-    st.session_state.app_state.generate_notebook(notebook_path)
-    st.success(f"Notebook generated: {notebook_path}")
+    """Generate a Jupyter notebook from the current operations"""
+    st.subheader("Generate Jupyter Notebook")
+
+    notebook_path = st.text_input("Notebook Path", value="data_analysis.ipynb")
+
+    if st.button("Generate Notebook"):
+        try:
+            # Create notebook cells based on operations
+            cells = generate_notebook_cells()
+
+            # Create the notebook
+            notebook = nbformat.v4.new_notebook()
+            notebook.cells = cells
+
+            # Save the notebook
+            with open(notebook_path, "w") as f:
+                nbformat.write(notebook, f)
+
+            st.success(f"Notebook generated at {notebook_path}")
+
+            # Provide download link
+            with open(notebook_path, "r") as f:
+                notebook_content = f.read()
+
+            st.download_button(
+                label="Download Notebook",
+                data=notebook_content,
+                file_name=os.path.basename(notebook_path),
+                mime="application/x-ipynb+json",
+            )
+        except Exception as e:
+            st.error(f"Error generating notebook: {e}")
 
 
-# Dialog for adding text component
+# Dialog for adding or editing text component
 @st.dialog("Add Text")
-def add_text():
-    st.write("Add Text Component")
+def add_text(component_id=None, edit=False):
+    dialog_title = "Edit Text Component" if edit else "Add Text Component"
+    st.write(dialog_title)
 
-    # Component form
-    text = st.text_area("Text Content")
+    component = None
+    component_text = ""
+
+    if edit and component_id:
+        component = next(
+            (c for c in st.session_state.app_state.components if getattr(c, "id", id(c)) == component_id), None
+        )
+        if component:
+            component_text = getattr(component, "text", "")
+
+    text = st.text_area("Text Content", value=component_text)
 
     if st.button("Submit"):
-        # Create component
-        component = TextComponent(text=text)
-        st.session_state.app_state.add_component(component)
-        st.rerun()
-
-
-# Dialog for editing text component
-@st.dialog("Edit Text")
-def edit_text(component_id):
-    component = next(
-        (c for c in st.session_state.app_state.components if getattr(c, "id", id(c)) == component_id), None
-    )
-    if component:
-        st.write("Edit Text Component")
-
-        # Get component properties
-        component_text = getattr(component, "text", "")
-
-        # Component form
-        text = st.text_area("Text Content", value=component_text)
-
-        if st.button("Submit"):
+        if edit and component:
             # Update component properties
             component.text = text
-
             st.session_state.app_state.update_component(component_id, component)
+            st.rerun()
+        else:
+            # Create component
+            component = TextComponent(text=text)
+            st.session_state.app_state.add_component(component)
             st.rerun()
 
 
-# Dialog for adding chart component
-@st.dialog("Add Chart", width="large")
-def add_chart():
-    """
-    Dialog for adding a chart component to the application.
+def edit_text(component_id):
+    return add_text(component_id=component_id, edit=True)
 
-    Creates a new chart based on user-selected parameters and adds it to the app state.
+
+# Dialog for adding or editing chart component
+@st.dialog("Chart", width="large")
+def add_chart(component_id=None, edit=False):
     """
-    st.write("Add Chart Component")
+    Dialog for adding or editing a chart component to the application.
+
+    Args:
+        component_id (str, optional): ID of the component to edit. Defaults to None.
+        edit (bool, optional): Whether this is an edit operation. Defaults to False.
+    """
+    dialog_title = "Edit Chart Component" if edit else "Add Chart Component"
+    st.write(dialog_title)
+
+    component = None
+    source_df_id = st.session_state.app_state.current_df_id
+    chart_type = "Line Chart"
+    existing_params = None
+
+    if edit and component_id:
+        # Get the component to edit
+        component = get_component_by_id(component_id)
+        if not component or not hasattr(component, "chart"):
+            st.error("Chart component not found")
+            return
+
+        source_df_id = getattr(component, "source_df_id", st.session_state.app_state.current_df_id)
+
+        # Get chart type
+        chart_type = getattr(component, "chart_type", "Line Chart")
+        if not chart_type:
+            chart_type = get_chart_type_from_component(component)
+
+        # Get existing parameters or extract from chart
+        existing_params = getattr(component, "chart_params", None)
+        if not existing_params:
+            existing_params = extract_chart_parameters(component.chart)
 
     # Get source dataframe
-    selected_df_id, df = select_df()
+    selected_df_id, df = select_df(source_df_id)
     if df is None:
         return
 
-    # Select chart type
-    chart_type = st.selectbox("Chart Type", list(chart_types.keys()))
+    # Allow user to change chart type
+    if edit:
+        chart_type = st.selectbox(
+            "Chart Type", list(chart_types.keys()), index=list(chart_types.keys()).index(chart_type)
+        )
+    else:
+        chart_type = st.selectbox("Chart Type", list(chart_types.keys()))
 
     # Get chart parameters based on type
-    chart_params = get_chart_params(chart_type, df)
+    chart_params = get_chart_params(chart_type, df, existing_params)
 
     if st.button("Submit"):
         # Create chart based on type
         chart_fig = create_chart(chart_type, df, chart_params)
 
-        # Create component
-        component = ChartComponent(chart=chart_fig)
+        if edit and component:
+            # Update component
+            component.chart = chart_fig
+            setattr(component, "source_df_id", selected_df_id)
 
-        # Store source dataframe ID and chart metadata for later editing
-        setattr(component, "source_df_id", selected_df_id)
-        setattr(component, "chart_type", chart_type)
-        setattr(component, "chart_params", chart_params)
+            # Update stored chart parameters and type
+            setattr(component, "chart_type", chart_type)
+            setattr(component, "chart_params", chart_params)
 
-        # Add component to app state
-        st.session_state.app_state.add_component(component)
-        st.rerun()
+            # Update component in app state
+            st.session_state.app_state.update_component(component_id, component)
+            st.rerun()
+        else:
+            # Create component
+            component = ChartComponent(chart=chart_fig)
+
+            # Store source dataframe ID and chart metadata for later editing
+            setattr(component, "source_df_id", selected_df_id)
+            setattr(component, "chart_type", chart_type)
+            setattr(component, "chart_params", chart_params)
+
+            # Add component to app state
+            st.session_state.app_state.add_component(component)
+            st.rerun()
+
+
+# Alias for edit_chart that calls add_chart with edit=True
+def edit_chart(component_id):
+    """
+    Dialog for editing an existing chart component.
+
+    Args:
+        component_id (str): ID of the component to edit
+    """
+    return add_chart(component_id=component_id, edit=True)
 
 
 def select_df(source_df_id=None):
@@ -201,13 +285,14 @@ def get_chart_params(chart_type, df, existing_params=None):
         "title": st.text_input("Chart Title", value=existing_params.get("title", "")),
     }
 
-    # Add x_column for all chart types
-    default_x = existing_params.get("x_column", "")
-    chart_params["x_column"] = st.selectbox(
-        "X Column",
-        options=columns,
-        index=columns.index(default_x) if default_x in columns else 0,
-    )
+    # Add x_column for all chart types except Pie Chart
+    if chart_type != "Pie Chart":
+        default_x = existing_params.get("x_column", "")
+        chart_params["x_column"] = st.selectbox(
+            "X Column",
+            options=columns,
+            index=columns.index(default_x) if default_x in columns else 0,
+        )
 
     # Add y_column for charts that need it
     if chart_type not in ["Histogram", "Pie Chart"]:
@@ -242,6 +327,15 @@ def get_chart_params(chart_type, df, existing_params=None):
             options=[""] + columns,
             index=([""] + columns).index(default_group) if default_group in [""] + columns else 0,
         )
+
+        # Add values_column for Pie Chart
+        if chart_type == "Pie Chart":
+            default_values = existing_params.get("values_column", "")
+            chart_params["values_column"] = st.selectbox(
+                "Values (optional)",
+                options=[""] + columns,
+                index=([""] + columns).index(default_values) if default_values in [""] + columns else 0,
+            )
 
     if chart_type == "Histogram":
         chart_params["bins"] = st.slider(
@@ -351,7 +445,8 @@ def create_chart(chart_type, df, params):
     if params.get("title"):
         chart_params["title"] = params["title"]
 
-    if params.get("x_column"):
+    # Add x_column for charts that need it (all except Pie Chart)
+    if chart_type != "Pie Chart" and params.get("x_column"):
         chart_params["x_column"] = params["x_column"]
 
     # Add y_column for charts that need it
@@ -369,6 +464,10 @@ def create_chart(chart_type, df, params):
     # Add group_by for charts that need it
     if chart_type in ["Bar Chart", "Pie Chart"] and params.get("group_by"):
         chart_params["group_by"] = params["group_by"]
+
+    # Add values_column for Pie Chart
+    if chart_type == "Pie Chart" and params.get("values_column"):
+        chart_params["values_column"] = params["values_column"]
 
     # Add histogram-specific parameters
     if chart_type == "Histogram":
@@ -388,62 +487,6 @@ def create_chart(chart_type, df, params):
     # Create chart
     chart = chart_class(**chart_params)
     return chart.plot()
-
-
-# Dialog for editing chart component
-@st.dialog("Edit Chart", width="large")
-def edit_chart(component_id):
-    """
-    Dialog for editing an existing chart component.
-
-    Args:
-        component_id (str): ID of the component to edit
-    """
-    # Get the component to edit
-    component = get_component_by_id(component_id)
-    if not component or not hasattr(component, "chart"):
-        st.error("Chart component not found")
-        return
-
-    st.write("Edit Chart Component")
-
-    # Get source dataframe
-    source_df_id = getattr(component, "source_df_id", st.session_state.app_state.current_df_id)
-    selected_df_id, df = select_df(source_df_id)
-    if df is None:
-        return
-
-    # Get chart type
-    chart_type = getattr(component, "chart_type", "Line Chart")
-    if not chart_type:
-        chart_type = get_chart_type_from_component(component)
-
-    # Allow user to change chart type
-    chart_type = st.selectbox("Chart Type", list(chart_types.keys()), index=list(chart_types.keys()).index(chart_type))
-
-    # Get existing parameters or extract from chart
-    existing_params = getattr(component, "chart_params", None)
-    if not existing_params:
-        existing_params = extract_chart_parameters(component.chart)
-
-    # Get chart parameters
-    chart_params = get_chart_params(chart_type, df, existing_params)
-
-    if st.button("Submit"):
-        # Create chart based on type
-        chart_fig = create_chart(chart_type, df, chart_params)
-
-        # Update component
-        component.chart = chart_fig
-        setattr(component, "source_df_id", selected_df_id)
-
-        # Update stored chart parameters and type
-        setattr(component, "chart_type", chart_type)
-        setattr(component, "chart_params", chart_params)
-
-        # Update component in app state
-        st.session_state.app_state.update_component(component_id, component)
-        st.rerun()
 
 
 def get_component_by_id(component_id):
@@ -567,7 +610,7 @@ def get_csv_file_parameters():
 def get_csv_separator():
     """Helper function to get CSV separator"""
     # Separator selection
-    separator_options = {"Comma (,)": ",", "Semicolon (;)": ";", "Tab (\\t)": "\t", "Pipe (|)": "|", "Space ( )": " "}
+    separator_options = {"Comma (,)": ",", "Semicolon (;)": ";", "Tab (\t)": "\t", "Pipe (|)": "|", "Space ( )": " "}
     separator_choice = st.selectbox("CSV Separator", options=list(separator_options.keys()), index=0)
     separator = separator_options[separator_choice]
 
@@ -583,18 +626,76 @@ def get_csv_separator():
 
 # Dialog for adding filter
 @st.dialog("Add Filter")
-def add_filter():
-    st.write("Add Filter")
+def add_filter(operation_id=None, edit=False):
+    dialog_title = "Edit Filter Operation" if edit else "Add Filter"
+    st.write(dialog_title)
+
+    # Initialize variables
+    operation = None
+    source_df_id = None
+    operation_name = f"Filter {uuid4().hex[:4]}"
+    filter_column = None
+    filter_type = None
+    filter_value = None
+
+    # If editing, get the operation and its values
+    if edit and operation_id:
+        operation = next((op for op in st.session_state.app_state.operations if op.id == operation_id), None)
+        if not operation or not hasattr(operation, "column") or operation.operation_type != "filter":
+            st.error("Filter operation not found")
+            return
+
+        source_df_id = operation.source_df_id
+        operation_name = operation.name
+        filter_column = operation.column
+        filter_type = operation.filter_type
+        filter_value = operation.filter_value
 
     # Get source dataframe
-    selected_df_id, df = get_source_df("Select Source Dataframe")
+    source_df_id, df = get_source_df("Select Source Dataframe" if not edit else "Select Source DataFrame", source_df_id)
     if df is None:
         return
 
-    name = st.text_input("Operation Name", value=f"Filter {uuid4().hex[:4]}")
+    name = st.text_input("Operation Name", value=operation_name)
 
     # Get filter parameters
-    filter_params = get_filter_parameters(df)
+    if edit and filter_column and filter_type:
+        # For editing, we need to pre-select the column and filter type
+        columns = df.columns.tolist()
+
+        # Set the default column index
+        column_index = 0
+        if filter_column in columns:
+            column_index = columns.index(filter_column)
+
+        column = st.selectbox("Select Column", options=columns, index=column_index)
+
+        # Set the default filter type index
+        filter_types = get_filter_types(df[column].dtype)
+        filter_type_index = 0
+        if filter_type in filter_types:
+            filter_type_index = filter_types.index(filter_type)
+
+        filter_type = st.selectbox("Filter Type", options=filter_types, index=filter_type_index)
+
+        # Set the filter value
+        if filter_type == "isin":
+            # For 'isin', we need to handle a list of values
+            if isinstance(filter_value, list):
+                filter_value_str = ", ".join(str(val) for val in filter_value)
+            else:
+                filter_value_str = str(filter_value)
+            filter_value_input = st.text_input(
+                "Filter Values (comma-separated for multiple values)", value=filter_value_str
+            )
+        else:
+            # For other filter types, it's a single value
+            filter_value_input = st.text_input("Filter Value", value=str(filter_value))
+
+        filter_params = {"column": column, "filter_type": filter_type, "filter_value": filter_value_input}
+    else:
+        # For adding new operations, use the existing helper function
+        filter_params = get_filter_parameters(df)
 
     if st.button("Submit"):
         # Convert filter value based on column data type
@@ -602,17 +703,33 @@ def add_filter():
             df, filter_params["column"], filter_params["filter_type"], filter_params["filter_value"]
         )
 
-        # Create operation
-        operation = FilterOperation(
-            name=name,
-            id=uuid4().hex,
-            column=filter_params["column"],
-            filter_type=filter_params["filter_type"],
-            filter_value=filter_value,
-            source_df_id=selected_df_id,
-        )
-        st.session_state.app_state.add_operation(operation)
+        if edit and operation:
+            # Update operation
+            operation.name = name
+            operation.column = filter_params["column"]
+            operation.filter_type = filter_params["filter_type"]
+            operation.filter_value = filter_value
+            operation.source_df_id = source_df_id
+
+            # Update operation in app state
+            st.session_state.app_state.update_operation(operation_id, operation)
+        else:
+            # Create operation
+            operation = FilterOperation(
+                name=name,
+                id=uuid4().hex,
+                column=filter_params["column"],
+                filter_type=filter_params["filter_type"],
+                filter_value=filter_value,
+                source_df_id=source_df_id,
+            )
+            st.session_state.app_state.add_operation(operation)
         st.rerun()
+
+
+def edit_filter_operation(operation_id):
+    """Dialog for editing a filter operation"""
+    return add_filter(operation_id=operation_id, edit=True)
 
 
 def get_filter_parameters(df):
@@ -620,7 +737,7 @@ def get_filter_parameters(df):
     columns = df.columns.tolist()
     column = st.selectbox("Column", options=columns)
 
-    filter_types = ["equals", "contains", "greater_than", "less_than", "between"]
+    filter_types = get_filter_types(df[column].dtype)
     filter_type = st.selectbox("Filter Type", options=filter_types)
 
     # Different input based on filter type
@@ -630,42 +747,164 @@ def get_filter_parameters(df):
             min_value = st.text_input("Min Value")
         with col2:
             max_value = st.text_input("Max Value")
-        filter_value = [min_value, max_value]
+        filter_value = f"{min_value},{max_value}"
+    elif filter_type == "isin":
+        filter_value = st.text_input("Filter Values (comma-separated for multiple values)")
     else:
         filter_value = st.text_input("Filter Value")
 
     return {"column": column, "filter_type": filter_type, "filter_value": filter_value}
 
 
+def get_filter_types(dtype):
+    """Helper function to get appropriate filter types based on column data type"""
+    # Basic filter types for all data types
+    filter_types = ["equals", "not_equals", "isin"]
+
+    # Add numeric-specific filter types for numeric data
+    if pd.api.types.is_numeric_dtype(dtype):
+        filter_types.extend(["greater_than", "less_than", "between"])
+
+    # Add string-specific filter types for string data
+    if pd.api.types.is_string_dtype(dtype):
+        filter_types.extend(["contains", "startswith", "endswith"])
+
+    # Add datetime-specific filter types for datetime data
+    if pd.api.types.is_datetime64_dtype(dtype):
+        filter_types.extend(["before", "after", "between"])
+
+    return filter_types
+
+
 def convert_filter_value(df, column, filter_type, filter_value):
     """Helper function to convert filter value based on column data type"""
     try:
-        if pd.api.types.is_numeric_dtype(df[column]):
-            if filter_type == "between":
-                return [float(filter_value[0]), float(filter_value[1])]
-            else:
-                return float(filter_value)
-    except ValueError:
-        # Keep as string if conversion fails
-        pass
+        # Handle empty values
+        if not filter_value:
+            if filter_type == "isin":
+                return []
+            return None
 
-    return filter_value
+        # Handle list-based filter types
+        if filter_type == "isin":
+            values = [val.strip() for val in filter_value.split(",")]
+            # Convert to appropriate type based on column
+            if pd.api.types.is_numeric_dtype(df[column].dtype):
+                return [float(val) if "." in val else int(val) for val in values if val]
+            elif pd.api.types.is_datetime64_dtype(df[column].dtype):
+                return [pd.to_datetime(val) for val in values if val]
+            else:
+                return values
+
+        # Handle between filter type
+        if filter_type == "between":
+            if "," in filter_value:
+                min_val, max_val = filter_value.split(",", 1)
+                min_val = min_val.strip()
+                max_val = max_val.strip()
+
+                # Convert to appropriate type
+                if pd.api.types.is_numeric_dtype(df[column].dtype):
+                    return [
+                        float(min_val) if "." in min_val else int(min_val),
+                        float(max_val) if "." in max_val else int(max_val),
+                    ]
+                elif pd.api.types.is_datetime64_dtype(df[column].dtype):
+                    return [pd.to_datetime(min_val), pd.to_datetime(max_val)]
+                else:
+                    return [min_val, max_val]
+            else:
+                # If no comma, return as single value list
+                return [filter_value, filter_value]
+
+        # Handle single value filter types
+        if pd.api.types.is_numeric_dtype(df[column].dtype):
+            # Convert to float or int based on value
+            if "." in filter_value:
+                return float(filter_value)
+            else:
+                return int(filter_value)
+        elif pd.api.types.is_datetime64_dtype(df[column].dtype):
+            return pd.to_datetime(filter_value)
+        else:
+            # For string columns, return as is
+            return filter_value
+    except (ValueError, TypeError):
+        # If conversion fails, return as string
+        return filter_value
 
 
 # Dialog for adding aggregation
 @st.dialog("Add Aggregation")
-def add_aggregation():
-    st.write("Add Aggregation")
+def add_aggregation(operation_id=None, edit=False):
+    dialog_title = "Edit Aggregation Operation" if edit else "Add Aggregation"
+    st.write(dialog_title)
+
+    # Initialize variables
+    operation = None
+    source_df_id = None
+    operation_name = f"Aggregate {uuid4().hex[:4]}"
+    group_by = []
+    agg_func = {}
+
+    # If editing, get the operation and its values
+    if edit and operation_id:
+        operation = next((op for op in st.session_state.app_state.operations if op.id == operation_id), None)
+        if not operation or not hasattr(operation, "group_by") or operation.operation_type != "aggregate":
+            st.error("Aggregation operation not found")
+            return
+
+        source_df_id = operation.source_df_id
+        operation_name = operation.name
+        group_by = operation.group_by
+        agg_func = operation.agg_func
 
     # Get source dataframe
-    selected_df_id, df = get_source_df("Select Source Dataframe")
+    source_df_id, df = get_source_df("Select Source Dataframe" if not edit else "Select Source DataFrame", source_df_id)
     if df is None:
         return
 
-    name = st.text_input("Operation Name", value=f"Aggregate {uuid4().hex[:4]}")
+    name = st.text_input("Operation Name", value=operation_name)
 
     # Get aggregation parameters
-    agg_params = get_aggregation_parameters(df)
+    if edit and operation:
+        # For editing, we need to pre-select the group by columns and aggregation functions
+        columns = df.columns.tolist()
+
+        # Group by columns with defaults from the operation
+        group_by = st.multiselect("Group By Columns", options=columns, default=group_by)
+
+        # Aggregation functions for each numeric column
+        st.subheader("Aggregation Functions")
+        agg_func_new = {}
+
+        numeric_columns = df.select_dtypes(include=["number"]).columns.tolist()
+        numeric_columns = [col for col in numeric_columns if col not in group_by]
+        if not numeric_columns:
+            st.warning("No numeric columns available for aggregation")
+        else:
+            for col in numeric_columns:
+                agg_options = ["none", "mean", "sum", "min", "max", "count", "median"]
+                # Set default index based on existing operation
+                default_index = 0
+                if col in agg_func:
+                    try:
+                        default_index = agg_options.index(agg_func[col])
+                    except ValueError:
+                        default_index = 0
+
+                selected_agg = st.selectbox(
+                    f"Aggregation for {col}", options=agg_options, index=default_index, key=f"edit_agg_{col}"
+                )
+
+                # Only add non-'none' aggregation functions to the dictionary
+                if selected_agg != "none":
+                    agg_func_new[col] = selected_agg
+
+        agg_params = {"group_by": group_by, "agg_func": agg_func_new}
+    else:
+        # For adding new operations, use the existing helper function
+        agg_params = get_aggregation_parameters(df)
 
     if st.button("Submit"):
         if not agg_params["group_by"]:
@@ -676,16 +915,31 @@ def add_aggregation():
             st.error("Please select at least one aggregation function")
             return
 
-        # Create operation
-        operation = AggregateOperation(
-            name=name,
-            id=uuid4().hex,
-            group_by=agg_params["group_by"],
-            agg_func=agg_params["agg_func"],
-            source_df_id=selected_df_id,
-        )
-        st.session_state.app_state.add_operation(operation)
+        if edit and operation:
+            # Update operation
+            operation.name = name
+            operation.group_by = agg_params["group_by"]
+            operation.agg_func = agg_params["agg_func"]
+            operation.source_df_id = source_df_id
+
+            # Update operation in app state
+            st.session_state.app_state.update_operation(operation_id, operation)
+        else:
+            # Create operation
+            operation = AggregateOperation(
+                name=name,
+                id=uuid4().hex,
+                group_by=agg_params["group_by"],
+                agg_func=agg_params["agg_func"],
+                source_df_id=source_df_id,
+            )
+            st.session_state.app_state.add_operation(operation)
         st.rerun()
+
+
+def edit_aggregation_operation(operation_id):
+    """Dialog for editing an aggregation operation"""
+    return add_aggregation(operation_id=operation_id, edit=True)
 
 
 def get_aggregation_parameters(df):
@@ -706,6 +960,7 @@ def get_aggregation_parameters(df):
     agg_func = {}
 
     numeric_columns = df.select_dtypes(include=["number"]).columns.tolist()
+    numeric_columns = [col for col in numeric_columns if col not in group_by]
     if not numeric_columns:
         st.warning("No numeric columns available for aggregation")
     else:
@@ -721,47 +976,195 @@ def get_aggregation_parameters(df):
     return {"group_by": group_by, "agg_func": {k: v for k, v in agg_func.items() if v != "none"}}
 
 
-# Dialog for adding data cleaning
+# Dialog for adding or editing data cleaning
 @st.dialog("Add Data Cleaning")
-def add_data_cleaning():
-    st.write("Add Data Cleaning")
+def add_data_cleaning(operation_id=None, edit=False):
+    dialog_title = "Edit Data Cleaning Operation" if edit else "Add Data Cleaning"
+    st.write(dialog_title)
+
+    # Initialize variables
+    operation = None
+    source_df_id = None
+    operation_name = f"Data Cleaning {uuid4().hex[:4]}"
+    clean_type = None
+    selected_columns = []
+    params = {"fill_value": None, "replace_values": {}, "new_column_names": {}}
+
+    # If editing, get the operation and its values
+    if edit and operation_id:
+        operation = next((op for op in st.session_state.app_state.operations if op.id == operation_id), None)
+        if not operation or not hasattr(operation, "clean_type"):
+            st.error("Data cleaning operation not found")
+            return
+
+        source_df_id = operation.source_df_id
+        operation_name = operation.name
+        clean_type = operation.clean_type
+        selected_columns = operation.columns if hasattr(operation, "columns") else []
+
+        # Set parameters based on cleaning type
+        if operation.clean_type == "fillna" and hasattr(operation, "fill_value"):
+            params["fill_value"] = operation.fill_value
+        elif operation.clean_type == "replace" and hasattr(operation, "replace_values"):
+            params["replace_values"] = operation.replace_values
+        elif operation.clean_type == "rename" and hasattr(operation, "new_column_names"):
+            params["new_column_names"] = operation.new_column_names
 
     # Get source dataframe
-    selected_df_id, df = get_source_df("Select Source Dataframe")
+    source_df_id, df = get_source_df("Select Source Dataframe" if not edit else "Select Source DataFrame", source_df_id)
     if df is None:
         return
 
-    name = st.text_input("Operation Name", value=f"Data Cleaning {uuid4().hex[:4]}")
+    # Set operation name
+    name = st.text_input("Operation Name", value=operation_name)
 
     # Select cleaning type
-    clean_type = select_clean_type()
+    if edit and clean_type:
+        clean_types = ["dropna", "fillna", "drop_duplicates", "replace", "rename"]
+        clean_type_index = clean_types.index(clean_type) if clean_type in clean_types else 0
+        clean_type = st.selectbox(
+            "Cleaning Type" if not edit else "Cleaning Method",
+            options=clean_types,
+            index=clean_type_index,
+            format_func=lambda x: {
+                "dropna": "Drop Missing Values",
+                "fillna": "Fill Missing Values",
+                "drop_duplicates": "Remove Duplicates",
+                "replace": "Replace Values",
+                "rename": "Rename Columns",
+            }.get(x, x),
+        )
+    else:
+        clean_type = select_clean_type()
 
     # Get columns from dataframe
     columns = df.columns.tolist()
 
     # Get columns to apply cleaning to
-    selected_columns = select_clean_cols(clean_type, columns)
+    if edit and selected_columns:
+        # For editing, we need to handle the selected columns differently
+        if clean_type in ["dropna", "fillna", "drop_duplicates", "replace"]:
+            selected_columns = st.multiselect(
+                "Select Columns" if clean_type != "rename" else "Select Columns to Rename", options=columns
+            )
+        else:
+            selected_columns = []
+    else:
+        selected_columns = select_clean_cols(clean_type, columns)
 
-    # Get additional cleaning parameters based on type
-    cleaning_params = get_cleaning_params(clean_type, df, columns)
+    # Get additional parameters based on type
+    if edit:
+        if clean_type == "fillna":
+            fill_options = ["", "mean", "median", "mode", "ffill", "bfill"]
+            fill_value = params["fill_value"]
+            fill_index = fill_options.index(fill_value) if fill_value in fill_options else 0
+            params["fill_value"] = st.selectbox("Fill Value", options=fill_options, index=fill_index)
+            if params["fill_value"] == "":
+                params["fill_value"] = st.text_input(
+                    "Custom Fill Value", value=str(fill_value) if fill_value not in fill_options else ""
+                )
+        elif clean_type == "replace":
+            st.write("Replace Values")
+            replace_values = {}
+
+            # Display existing replace values
+            for i, (old_val, new_val) in enumerate(params["replace_values"].items()):
+                col1, col2, col3 = st.columns([3, 3, 1])
+                with col1:
+                    old_value = st.text_input(f"Old Value {i+1}", value=str(old_val))
+                with col2:
+                    new_value = st.text_input(f"New Value {i+1}", value=str(new_val))
+                with col3:
+                    if st.button("", key=f"del_replace_{i}"):
+                        continue  # Skip this pair in the loop
+
+                replace_values[convert_val_to_type(old_value)] = convert_val_to_type(new_value)
+
+            # Add new replace value
+            if st.button("Add Replace Value"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    old_value = st.text_input("Old Value", key="new_old_val")
+                with col2:
+                    new_value = st.text_input("New Value", key="new_new_val")
+
+                if old_value:
+                    replace_values[convert_val_to_type(old_value)] = convert_val_to_type(new_value)
+
+            params["replace_values"] = replace_values
+        elif clean_type == "rename":
+            st.write("Rename Columns")
+            new_column_names = {}
+
+            # Display existing column renames
+            for i, (old_name, new_name) in enumerate(params["new_column_names"].items()):
+                if old_name in df.columns:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.text(f"Original: {old_name}")
+                    with col2:
+                        new_column_name = st.text_input(f"New Name for {old_name}", value=new_name, key=f"rename_{i}")
+                        new_column_names[old_name] = new_column_name
+
+            # Add options for columns not yet renamed
+            for col in df.columns:
+                if col not in new_column_names:
+                    rename_col = st.checkbox(f"Rename {col}", key=f"check_{col}")
+                    if rename_col:
+                        new_name = st.text_input(f"New Name for {col}", key=f"new_name_{col}")
+                        if new_name:
+                            new_column_names[col] = new_name
+
+            params["new_column_names"] = new_column_names
+    else:
+        # For adding new operations, use the existing helper functions
+        cleaning_params = get_cleaning_params(clean_type, df, columns)
+        params["fill_value"] = cleaning_params.get("fill_value")
+        params["replace_values"] = cleaning_params.get("replace_values", {})
+        params["new_column_names"] = cleaning_params.get("new_column_names", {})
 
     if st.button("Submit"):
-        # Create operation
-        operation = DataCleanOperation(
-            name=name,
-            id=uuid4().hex,
-            clean_type=clean_type,
-            columns=selected_columns,
-            fill_value=cleaning_params.get("fill_value"),
-            replace_values=cleaning_params.get("replace_values", {}),
-            new_column_names=cleaning_params.get("new_column_names", {}),
-            source_df_id=selected_df_id,
-        )
-        st.session_state.app_state.add_operation(operation)
-        st.rerun()
+        if edit and operation:
+            # Update operation
+            operation.name = name
+            operation.clean_type = clean_type
+            operation.columns = selected_columns
+            operation.source_df_id = source_df_id
+
+            # Update specific parameters based on cleaning type
+            if clean_type == "fillna":
+                operation.fill_value = convert_val_to_type(params["fill_value"])
+            elif clean_type == "replace":
+                operation.replace_values = params["replace_values"]
+            elif clean_type == "rename":
+                operation.new_column_names = params["new_column_names"]
+
+            # Update operation in app state
+            st.session_state.app_state.update_operation(operation_id, operation)
+            st.rerun()
+        else:
+            # Create operation
+            operation = DataCleanOperation(
+                name=name,
+                id=uuid4().hex,
+                clean_type=clean_type,
+                columns=selected_columns,
+                fill_value=params["fill_value"],
+                replace_values=params["replace_values"],
+                new_column_names=params["new_column_names"],
+                source_df_id=source_df_id,
+            )
+            st.session_state.app_state.add_operation(operation)
+            st.rerun()
 
 
-def get_source_df(label="Select Dataframe"):
+# Alias for edit_data_cleaning_operation that calls add_data_cleaning with edit=True
+def edit_data_cleaning_operation(operation_id):
+    """Dialog for editing a data cleaning operation"""
+    return add_data_cleaning(operation_id=operation_id, edit=True)
+
+
+def get_source_df(label="Select Dataframe", source_df_id=None):
     """Helper function to get a source dataframe for operations"""
     # Get available dataframes
     df_names = st.session_state.app_state.get_dataframe_names()
@@ -771,9 +1174,16 @@ def get_source_df(label="Select Dataframe"):
 
     # Select source dataframe
     df_options = list(df_names.items())
+
+    # Set the default index based on the source_df_id if provided
+    index = 0
+    if source_df_id and source_df_id in [df_id for df_id, _ in df_options]:
+        index = [df_id for df_id, _ in df_options].index(source_df_id)
+
     selected_df_id = st.selectbox(
         label,
         options=[df_id for df_id, _ in df_options],
+        index=index,
         format_func=lambda x: df_names.get(x, "Unknown"),
     )
 
@@ -1044,6 +1454,8 @@ def display_eda_tab():
                     st.markdown(component.text)
                 elif hasattr(component, "chart"):
                     st.plotly_chart(component.chart, use_container_width=True)
+                elif hasattr(component, "info_type"):
+                    display_data_info(component.info_type, component.source_df_id)
 
                 # Component actions
                 col1, col2 = st.columns(2)
@@ -1054,6 +1466,9 @@ def display_eda_tab():
                     elif hasattr(component, "chart"):
                         if st.button("Edit", key=f"edit_comp_{i}"):
                             edit_chart(component_id)
+                    elif hasattr(component, "info_type"):
+                        if st.button("Edit", key=f"edit_comp_{i}"):
+                            edit_data_info_component(component_id)
 
                 with col2:
                     if st.button("Delete", key=f"delete_comp_{i}"):
@@ -1125,278 +1540,6 @@ def display_data_operations_tab():
         st.info("No operations added yet. Use the sidebar to add operations.")
 
 
-@st.dialog("Edit Filter")
-def edit_filter_operation(operation_id):
-    """Dialog for editing a filter operation"""
-    # Get the operation to edit
-    operation = next((op for op in st.session_state.app_state.operations if op.id == operation_id), None)
-    if not operation or not hasattr(operation, "column"):
-        st.error("Filter operation not found")
-        return
-
-    st.write("Edit Filter Operation")
-
-    # Get source dataframe
-    source_df_id, df = get_source_df("Select Source DataFrame")
-    if df is None:
-        return
-
-    # Get filter parameters
-    filter_params = get_filter_parameters(df)
-
-    # Set default values from existing operation
-    filter_params["name"] = st.text_input("Operation Name", value=operation.name)
-
-    # Find column index
-    column_index = 0
-    if operation.column in df.columns:
-        column_index = list(df.columns).index(operation.column)
-    filter_params["column"] = st.selectbox("Column", options=df.columns, index=column_index)
-
-    # Find filter type index
-    filter_types = ["equals", "contains", "greater_than", "less_than", "between"]
-    filter_type_index = 0
-    if operation.filter_type in filter_types:
-        filter_type_index = filter_types.index(operation.filter_type)
-    filter_params["filter_type"] = st.selectbox("Filter Type", options=filter_types, index=filter_type_index)
-
-    # Set filter value based on type
-    if filter_params["filter_type"] == "between":
-        col1, col2 = st.columns(2)
-        with col1:
-            min_val = (
-                operation.filter_value[0]
-                if isinstance(operation.filter_value, (list, tuple)) and len(operation.filter_value) > 0
-                else ""
-            )
-            filter_params["min_value"] = st.text_input("Min Value", value=str(min_val))
-        with col2:
-            max_val = (
-                operation.filter_value[1]
-                if isinstance(operation.filter_value, (list, tuple)) and len(operation.filter_value) > 1
-                else ""
-            )
-            filter_params["max_value"] = st.text_input("Max Value", value=str(max_val))
-    else:
-        filter_params["filter_value"] = st.text_input(
-            "Filter Value", value=str(operation.filter_value) if operation.filter_value is not None else ""
-        )
-
-    if st.button("Submit"):
-        # Update operation
-        operation.name = filter_params["name"]
-        operation.column = filter_params["column"]
-        operation.filter_type = filter_params["filter_type"]
-        operation.source_df_id = source_df_id
-
-        # Convert filter value based on column data type
-        if filter_params["filter_type"] == "between":
-            min_val = convert_filter_value(
-                df, filter_params["column"], filter_params["filter_type"], filter_params["min_value"]
-            )
-            max_val = convert_filter_value(
-                df, filter_params["column"], filter_params["filter_type"], filter_params["max_value"]
-            )
-            operation.filter_value = [min_val, max_val]
-        else:
-            operation.filter_value = convert_filter_value(
-                df, filter_params["column"], filter_params["filter_type"], filter_params["filter_value"]
-            )
-
-        # Update operation in app state
-        st.session_state.app_state.update_operation(operation_id, operation)
-        st.rerun()
-
-
-@st.dialog("Edit Aggregation")
-def edit_aggregation_operation(operation_id):
-    """
-    Dialog for editing an aggregation operation.
-
-    Args:
-        operation_id (str): ID of the operation to edit
-    """
-    # Get the operation to edit
-    operation = next((op for op in st.session_state.app_state.operations if op.id == operation_id), None)
-    if not operation or not hasattr(operation, "group_by"):
-        st.error("Aggregation operation not found")
-        return
-
-    st.write("Edit Aggregation Operation")
-
-    # Get source dataframe
-    source_df_id, df = get_source_df("Select Source DataFrame")
-    if df is None:
-        return
-
-    # Set operation name
-    name = st.text_input("Operation Name", value=operation.name)
-
-    # Get aggregation parameters
-    columns = df.columns.tolist()
-
-    # Group by columns
-    group_by = st.multiselect("Group By Columns", options=columns, default=operation.group_by)
-
-    # Aggregation functions for each numeric column
-    st.subheader("Aggregation Functions")
-    agg_func = {}
-
-    numeric_columns = df.select_dtypes(include=["number"]).columns.tolist()
-    if not numeric_columns:
-        st.warning("No numeric columns available for aggregation")
-    else:
-        for col in numeric_columns:
-            agg_options = ["none", "mean", "sum", "min", "max", "count", "median"]
-            # Set default index based on existing operation
-            default_index = 0
-            if col in operation.agg_func:
-                try:
-                    default_index = agg_options.index(operation.agg_func[col])
-                except ValueError:
-                    default_index = 0
-
-            selected_agg = st.selectbox(
-                f"Aggregation for {col}", options=agg_options, index=default_index, key=f"edit_agg_{col}"
-            )
-
-            # Only add non-'none' aggregation functions to the dictionary
-            if selected_agg != "none":
-                agg_func[col] = selected_agg
-
-    if st.button("Submit"):
-        if not group_by:
-            st.error("Please select at least one column to group by")
-            return
-
-        if not agg_func:
-            st.error("Please select at least one aggregation function")
-            return
-
-        # Update operation
-        operation.name = name
-        operation.group_by = group_by
-        operation.agg_func = {k: v for k, v in agg_func.items() if v != "none"}
-        operation.source_df_id = source_df_id
-
-        # Update operation in app state
-        st.session_state.app_state.update_operation(operation_id, operation)
-        st.rerun()
-
-
-@st.dialog("Edit Data Cleaning")
-def edit_data_cleaning_operation(operation_id):
-    """Dialog for editing a data cleaning operation"""
-    # Get the operation to edit
-    operation = next((op for op in st.session_state.app_state.operations if op.id == operation_id), None)
-    if not operation or not hasattr(operation, "clean_type"):
-        st.error("Data cleaning operation not found")
-        return
-
-    st.write("Edit Data Cleaning Operation")
-
-    # Get source dataframe
-    source_df_id, df = get_source_df("Select Source DataFrame")
-    if df is None:
-        return
-
-    # Set operation name
-    name = st.text_input("Operation Name", value=operation.name)
-
-    # Set cleaning type
-    clean_types = ["dropna", "fillna", "drop_duplicates", "replace", "rename"]
-    clean_type_index = clean_types.index(operation.clean_type) if operation.clean_type in clean_types else 0
-    clean_type = st.selectbox("Cleaning Type", options=clean_types, index=clean_type_index)
-
-    # Select columns based on cleaning type
-    columns = select_clean_cols(clean_type, df.columns)
-
-    # Get additional cleaning parameters based on type
-    params = {}
-    if clean_type == "fillna":
-        fill_options = ["", "mean", "median", "mode", "ffill", "bfill"]
-        fill_index = fill_options.index(operation.fill_value) if operation.fill_value in fill_options else 0
-        params["fill_value"] = st.selectbox("Fill Value", options=fill_options, index=fill_index)
-        if params["fill_value"] == "":
-            params["fill_value"] = st.text_input(
-                "Custom Fill Value", value=str(operation.fill_value) if operation.fill_value not in fill_options else ""
-            )
-
-    elif clean_type == "replace":
-        st.write("Replace Values")
-        replace_values = {}
-
-        # Display existing replace values
-        for i, (old_val, new_val) in enumerate(operation.replace_values.items()):
-            col1, col2, col3 = st.columns([3, 3, 1])
-            with col1:
-                old_value = st.text_input(f"Old Value {i+1}", value=str(old_val))
-            with col2:
-                new_value = st.text_input(f"New Value {i+1}", value=str(new_val))
-            with col3:
-                if st.button("🗑️", key=f"del_replace_{i}"):
-                    continue  # Skip this pair in the loop
-
-            replace_values[convert_val_to_type(old_value)] = convert_val_to_type(new_value)
-
-        # Add new replace value
-        if st.button("Add Replace Value"):
-            col1, col2 = st.columns(2)
-            with col1:
-                old_value = st.text_input("Old Value", key="new_old_val")
-            with col2:
-                new_value = st.text_input("New Value", key="new_new_val")
-
-            if old_value:
-                replace_values[convert_val_to_type(old_value)] = convert_val_to_type(new_value)
-
-        params["replace_values"] = replace_values
-
-    elif clean_type == "rename":
-        st.write("Rename Columns")
-        new_column_names = {}
-
-        # Display existing column renames
-        for i, (old_name, new_name) in enumerate(operation.new_column_names.items()):
-            if old_name in df.columns:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.text(f"Original: {old_name}")
-                with col2:
-                    new_column_name = st.text_input(f"New Name for {old_name}", value=new_name, key=f"rename_{i}")
-                    new_column_names[old_name] = new_column_name
-
-        # Add options for columns not yet renamed
-        for col in df.columns:
-            if col not in new_column_names:
-                rename_col = st.checkbox(f"Rename {col}", key=f"check_{col}")
-                if rename_col:
-                    new_name = st.text_input(f"New Name for {col}", key=f"new_name_{col}")
-                    if new_name:
-                        new_column_names[col] = new_name
-
-        params["new_column_names"] = new_column_names
-
-    if st.button("Submit"):
-        # Update operation
-        operation.name = name
-        operation.clean_type = clean_type
-        operation.columns = columns
-        operation.source_df_id = source_df_id
-
-        # Update specific parameters based on cleaning type
-        if clean_type == "fillna":
-            operation.fill_value = convert_val_to_type(params["fill_value"])
-        elif clean_type == "replace":
-            operation.replace_values = params["replace_values"]
-        elif clean_type == "rename":
-            operation.new_column_names = params["new_column_names"]
-
-        # Update operation in app state
-        st.session_state.app_state.update_operation(operation_id, operation)
-        st.rerun()
-
-
 def display_data_tab():
     """Display dataframe information and preview in the data tab"""
     # Display available dataframes
@@ -1453,7 +1596,7 @@ def display_data_tab():
                 st.dataframe(df.describe())
 
                 st.write("### Column Types")
-                dtypes_df = pd.DataFrame(df.dtypes, columns=["Data Type"])
+                dtypes_df = pd.DataFrame({"Data Type": [str(dtype) for dtype in df.dtypes]}, index=df.columns)
                 dtypes_df.index.name = "Column"
                 st.dataframe(dtypes_df.reset_index())
 
@@ -1469,97 +1612,243 @@ def display_data_tab():
         st.info("No dataframes available yet. Load a CSV file to get started.")
 
 
-# Main app layout
-st.title("Simple & Elegant Data Explorer System (🚽 SEDES)")
+# Dialog for adding data info component
+@st.dialog("Data Info")
+def add_data_info(component_id=None, edit=False):
+    """
+    Dialog for adding or editing a data info component to the application.
 
-# Load sample data if no operations exist
-if not st.session_state.app_state.operations:
-    # Load sample data for demonstration
-    try:
-        sample_df = pd.read_csv("src/iris.csv")
-        if "sample_data_loaded" not in st.session_state:
-            # Create a load operation for the sample data
-            operation = LoadCsvOperation(name="Sample Iris Dataset", id=uuid4().hex, file_path="src/iris.csv", sep=",")
-            st.session_state.app_state.add_operation(operation)
-            st.session_state.sample_data_loaded = True
-    except Exception as e:
-        st.warning(f"Could not load sample data: {e}")
+    Args:
+        component_id (str, optional): ID of the component to edit. Defaults to None.
+        edit (bool, optional): Whether this is an edit operation. Defaults to False.
+    """
+    dialog_title = "Edit Data Info Component" if edit else "Add Data Info Component"
+    st.write(dialog_title)
+
+    component = None
+    source_df_id = st.session_state.app_state.current_df_id
+    info_type = "preview"
+
+    if edit and component_id:
+        # Get the component to edit
+        component = get_component_by_id(component_id)
+        if not component or not isinstance(component, DataInfoComponent):
+            st.error("Data Info component not found")
+            return
+
+        source_df_id = getattr(component, "source_df_id", st.session_state.app_state.current_df_id)
+        info_type = getattr(component, "info_type", "preview")
+
+    # Get source dataframe
+    selected_df_id, df = select_df(source_df_id)
+    if df is None:
+        return
+
+    # Select the type of information to display
+    info_types = {
+        "preview": "DataFrame Preview",
+        "shape": "Shape (rows & columns)",
+        "stats": "Statistics (describe)",
+        "types": "Column Types",
+        "missing": "Missing Values",
+        "all": "All Information",
+    }
+
+    info_type = st.selectbox(
+        "Information Type",
+        options=list(info_types.keys()),
+        format_func=lambda x: info_types[x],
+        index=list(info_types.keys()).index(info_type) if info_type in info_types else 0,
+    )
+
+    if st.button("Submit"):
+        if edit and component:
+            # Update component
+            component.source_df_id = selected_df_id
+            component.info_type = info_type
+
+            # Update component in app state
+            st.session_state.app_state.update_component(component_id, component)
+            st.rerun()
+        else:
+            # Create component
+            component = DataInfoComponent(
+                source_df_id=selected_df_id, info_type=info_type, name=f"Data Info: {info_types[info_type]}"
+            )
+
+            # Add component to app state
+            st.session_state.app_state.add_component(component)
+            st.rerun()
 
 
-# Helper function for creating icon buttons
-def icon_button(icon, label, key):
-    return st.button(icon, help=label, key=key)
+def edit_data_info_component(component_id):
+    """Dialog for editing a data info component"""
+    return add_data_info(component_id=component_id, edit=True)
 
 
-# Sidebar for operations
-with st.sidebar:
-    st.header("Operations")
+def display_data_info(info_type, source_df_id):
+    """Helper function to display data info"""
+    df = st.session_state.app_state.get_dataframe_by_id(source_df_id)
+    if df is None:
+        st.warning("Selected dataframe is not available.")
+        return
 
-    # Data operations section
-    st.subheader("Data Operations")
+    if info_type == "preview":
+        st.dataframe(df.sample(10) if df.shape[0] > 10 else df.head())
+    elif info_type == "shape":
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Rows", df.shape[0])
+        with c2:
+            st.metric("Columns", df.shape[1])
+    elif info_type == "stats":
+        st.dataframe(df.describe())
+    elif info_type == "types":
+        dtypes_df = pd.DataFrame({"Data Type": [str(dtype) for dtype in df.dtypes]}, index=df.columns)
+        dtypes_df.index.name = "Column"
+        st.dataframe(dtypes_df.reset_index())
+    elif info_type == "missing":
+        missing_df = pd.DataFrame(
+            {"Missing Values": df.isna().sum(), "Percentage": (df.isna().sum() / len(df) * 100).round(2)}
+        )
+        missing_df.index.name = "Column"
+        st.dataframe(missing_df.reset_index())
+    elif info_type == "all":
+        display_dataframe_info(df)
 
-    c1, c2, c3 = st.columns(3)
 
-    with c1:
-        if st.button("📂", help="Load CSV", key="load_csv_btn"):
-            load_csv()
-    with c2:
-        if st.button("📊", help="DataFrame Info", key="df_info_btn"):
-            show_dataframe_info()
-    with c3:
-        if st.button("💾", help="Save CSV", key="save_csv_btn"):
-            save_csv()
+def display_dataframe_info(df):
+    """Helper function to display dataframe info"""
+    # Display basic info
+    st.subheader("Basic Information")
+    st.write(f"Shape: {df.shape[0]} rows × {df.shape[1]} columns")
 
-    # Data transformations section
-    st.subheader("Data Transformations")
+    # Display column types
+    st.subheader("Column Types")
+    dtypes_df = pd.DataFrame({"Data Type": [str(dtype) for dtype in df.dtypes]}, index=df.columns)
+    dtypes_df.index.name = "Column"
+    st.dataframe(dtypes_df.reset_index())
 
-    c1, c2, c3 = st.columns(3)
+    # Display missing values
+    st.subheader("Missing Values")
+    missing_df = pd.DataFrame(
+        {"Missing Values": df.isna().sum(), "Percentage": (df.isna().sum() / len(df) * 100).round(2)}
+    )
+    missing_df.index.name = "Column"
+    st.dataframe(missing_df.reset_index())
 
-    with c1:
-        if st.button("🔍", help="Add Filter", key="add_filter_btn"):
-            add_filter()
-    with c2:
-        if st.button("📊", help="Add Aggregation", key="add_agg_btn"):
-            add_aggregation()
-    with c3:
-        if st.button("🧹", help="Add Data Cleaning", key="add_clean_btn"):
-            add_data_cleaning()
+    # Display numeric statistics
+    st.subheader("Numeric Statistics")
+    st.dataframe(df.describe())
 
-    # Component operations section
-    st.subheader("Components")
+    # Display sample data
+    st.subheader("Sample Data")
+    st.dataframe(df.sample(10) if df.shape[0] > 10 else df.head())
 
-    c1, c2, c3 = st.columns(3)
 
-    with c1:
-        if st.button("📝", help="Add Text", key="add_text_btn"):
-            add_text()
-    with c2:
-        if st.button("📈", help="Add Chart", key="add_chart_btn"):
-            add_chart()
+def display_state_management_tab():
+    """Display state json representation"""
+    pass
 
-    # State management section
-    st.subheader("State Management")
 
-    c1, c2, c3 = st.columns(3)
+def main():
+    # Main app layout
+    st.title("Simple & Elegant Data Exploration System (🚽 SEDES)")
 
-    with c1:
-        if st.button("💾", help="Save State", key="save_state_btn", disabled=True):
-            save_state()
-    with c2:
-        if st.button("📂", help="Load State", key="load_state_btn", disabled=True):
-            load_state()
-    with c3:
-        if st.button("📓", help="Generate Notebook", key="gen_notebook_btn", disabled=True):
-            generate_notebook()
+    # Load sample data if no operations exist
+    if not st.session_state.app_state.operations:
+        # Load sample data for demonstration
+        try:
+            sample_df = pd.read_csv("src/iris.csv")
+            if "sample_data_loaded" not in st.session_state:
+                # Create a load operation for the sample data
+                operation = LoadCsvOperation(
+                    name="Sample Iris Dataset", id=uuid4().hex, file_path="src/iris.csv", sep=","
+                )
+                st.session_state.app_state.add_operation(operation)
+                st.session_state.sample_data_loaded = True
+        except Exception as e:
+            st.warning(f"Could not load sample data: {e}")
 
-# Main content
-tab1, tab2, tab3 = st.tabs(["EDA", "Data Operations", "Data Preview"])
+    # Sidebar for operations
+    with st.sidebar:
+        st.header("Operations")
 
-with tab1:
-    display_eda_tab()
+        # Data operations section
+        st.subheader("Data Operations")
 
-with tab2:
-    display_data_operations_tab()
+        c1, c2, c3 = st.columns(3)
 
-with tab3:
-    display_data_tab()
+        with c1:
+            if st.button("📂", help="Load CSV", key="load_csv_btn"):
+                load_csv()
+        with c2:
+            if st.button("📊", help="DataFrame Info", key="df_info_btn"):
+                show_dataframe_info()
+        with c3:
+            if st.button("💾", help="Save CSV", key="save_csv_btn"):
+                save_csv()
+
+        # Data transformations section
+        st.subheader("Data Transformations")
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            if st.button("🔍", help="Add Filter", key="add_filter_btn"):
+                add_filter()
+        with c2:
+            if st.button("🔄", help="Add Aggregation", key="add_agg_btn"):
+                add_aggregation()
+        with c3:
+            if st.button("🧹", help="Add Data Cleaning", key="add_clean_btn"):
+                add_data_cleaning()
+
+        # Component operations section
+        st.subheader("EDA Components")
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            if st.button("📝", help="Add Text", key="add_text_btn"):
+                add_text()
+        with c2:
+            if st.button("📈", help="Add Chart", key="add_chart_btn"):
+                add_chart()
+        with c3:
+            if st.button("📊", help="Add Data Info", key="add_data_info_btn"):
+                add_data_info()
+
+        # State management section
+        st.subheader("State Management")
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            if st.button("💾", help="Save State", key="save_state_btn", disabled=True):
+                save_state()
+        with c2:
+            if st.button("📂", help="Load State", key="load_state_btn", disabled=True):
+                load_state()
+        with c3:
+            if st.button("📓", help="Generate Notebook", key="gen_notebook_btn", disabled=True):
+                generate_notebook()
+
+    # Main content
+    tab1, tab2, tab3, tab4 = st.tabs(["EDA", "Data Operations", "Data Preview", "State Management"])
+
+    with tab1:
+        display_eda_tab()
+
+    with tab2:
+        display_data_operations_tab()
+
+    with tab3:
+        display_data_tab()
+
+    with tab4:
+        display_state_management_tab()
+
+
+if __name__ == "__main__":
+    main()

@@ -48,27 +48,17 @@ class AppState:
             # For other operations, apply to the appropriate dataframe
             source_df_id = operation.source_df_id or self.current_df_id
             if source_df_id in self.dataframes:
-                # Get the original dataframe to work with
-                source_df = self.original_dataframes.get(source_df_id, pd.DataFrame())
-
-                # Apply all operations that should be applied to this dataframe
-                result_df = source_df.copy()
-
-                # Find all operations that should be applied to this dataframe
-                for op in self.operations:
-                    if op.id == operation.id:
-                        # This is the current operation, apply it to the result
-                        result_df = op.apply(result_df)
-                        # Create a new dataframe entry with the result
-                        self.dataframes[op.id] = result_df
-                        self.original_dataframes[op.id] = source_df.copy()  # Keep original as reference
-                        self.dataframe_names[op.id] = op.name
-                        self.current_df_id = op.id
-                        break
-                    elif op.source_df_id == source_df_id and op.id != operation.id:
-                        # This is an operation that should be applied to the source dataframe
-                        # before our current operation
-                        result_df = op.apply(result_df)
+                # Get the source dataframe to work with
+                source_df = self.dataframes.get(source_df_id, pd.DataFrame())
+                
+                # Apply the current operation to the source dataframe
+                result_df = operation.apply(source_df.copy())
+                
+                # Store the result
+                self.dataframes[operation.id] = result_df
+                self.original_dataframes[operation.id] = source_df.copy()  # Keep original as reference
+                self.dataframe_names[operation.id] = operation.name
+                self.current_df_id = operation.id
 
     def delete_operation(self, operation_id: str) -> None:
         """Delete an operation from the app state."""
@@ -100,40 +90,55 @@ class AppState:
             if op.id == operation_id:
                 self.operations[i] = operation
                 break
-        
+        else:
+            # Operation not found
+            return
+
         # Re-execute the operation
         if operation.operation_type == "load_csv":
-            # For load operations, update the dataframe
+            # For load operations, create a new dataframe
             df = operation.apply(None)
             self.dataframes[operation.id] = df
             self.original_dataframes[operation.id] = df.copy()
             self.dataframe_names[operation.id] = operation.name
-            self.current_df_id = operation.id
         else:
             # For other operations, apply to the appropriate dataframe
             source_df_id = operation.source_df_id or self.current_df_id
             if source_df_id in self.dataframes:
-                # Get the original dataframe to work with
-                source_df = self.original_dataframes.get(source_df_id, pd.DataFrame())
+                # Get the source dataframe to work with
+                source_df = self.dataframes.get(source_df_id, pd.DataFrame())
+                
+                # Apply the current operation to the source dataframe
+                result_df = operation.apply(source_df.copy())
+                
+                # Store the result
+                self.dataframes[operation.id] = result_df
+                self.original_dataframes[operation.id] = source_df.copy()  # Keep original as reference
+                self.dataframe_names[operation.id] = operation.name
 
-                # Apply all operations that should be applied to this dataframe
-                result_df = source_df.copy()
+        # Update dependent operations
+        self._update_dependent_operations(operation_id)
 
-                # Find all operations that should be applied to this dataframe
-                for op in self.operations:
-                    if op.id == operation.id:
-                        # This is the current operation, apply it to the result
-                        result_df = op.apply(result_df)
-                        # Update the dataframe entry with the result
-                        self.dataframes[op.id] = result_df
-                        self.original_dataframes[op.id] = source_df.copy()  # Keep original as reference
-                        self.dataframe_names[op.id] = op.name
-                        self.current_df_id = op.id
-                        break
-                    elif op.source_df_id == source_df_id and op.id != operation.id:
-                        # This is an operation that should be applied to the source dataframe
-                        # before our current operation
-                        result_df = op.apply(result_df)
+    def _update_dependent_operations(self, parent_operation_id: str) -> None:
+        """Update operations that depend on the given operation."""
+        # Find operations that use this operation's dataframe as source
+        dependent_ops = [op for op in self.operations if op.source_df_id == parent_operation_id]
+        
+        # Update each dependent operation
+        for op in dependent_ops:
+            if parent_operation_id in self.dataframes:
+                # Get the source dataframe
+                source_df = self.dataframes.get(parent_operation_id, pd.DataFrame())
+                
+                # Apply the operation
+                result_df = op.apply(source_df.copy())
+                
+                # Update the result
+                self.dataframes[op.id] = result_df
+                self.original_dataframes[op.id] = source_df.copy()  # Keep original as reference
+                
+                # Recursively update operations that depend on this one
+                self._update_dependent_operations(op.id)
 
     def get_current_dataframe(self) -> Optional[pd.DataFrame]:
         """Get the current dataframe."""

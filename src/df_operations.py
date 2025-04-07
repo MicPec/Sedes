@@ -30,18 +30,36 @@ class FilterOperation(BaseDfOperation):
         if not self.column or not self.filter_type:
             return df
 
+        # Define filter functions for each filter type
         case_map = {
             "equals": lambda x: x == self.filter_value,
-            "contains": lambda x: x.astype(str).str.contains(str(self.filter_value), na=False),
+            "not_equals": lambda x: x != self.filter_value,
             "greater_than": lambda x: x > self.filter_value,
             "less_than": lambda x: x < self.filter_value,
             "between": lambda x: (x >= self.filter_value[0]) & (x <= self.filter_value[1]),
+            "isin": lambda x: x in self.filter_value if isinstance(self.filter_value, (list, tuple)) else False,
         }
+
+        # Add string-specific filter types
+        string_filters = {
+            "contains": lambda x: str(self.filter_value) in str(x),
+            "startswith": lambda x: str(x).startswith(str(self.filter_value)),
+            "endswith": lambda x: str(x).endswith(str(self.filter_value)),
+        }
+
+        # Combine all filter types
+        case_map.update(string_filters)
 
         if self.filter_type not in case_map:
             return df
 
-        return df[df[self.column].apply(case_map[self.filter_type])]
+        try:
+            # Apply the filter
+            return df[df[self.column].apply(case_map[self.filter_type])]
+        except Exception as e:
+            # Fallback for any errors
+            print(f"Error applying filter: {e}")
+            return df
 
 
 @dataclass
